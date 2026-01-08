@@ -82,7 +82,7 @@ public:
 	bool IsServerStarted() const { return bServerStarted; }
 
 	UFUNCTION(BlueprintCallable, Category = "Simple HTTP Server")
-	void StartServer(int32 ServerPort = 8080);
+	void StartServer(int32 ServerPort = 9080);
 
 	UFUNCTION(BlueprintCallable, Category = "Simple HTTP Server")
 	void StopServer();
