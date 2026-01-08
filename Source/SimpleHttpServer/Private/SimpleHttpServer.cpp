@@ -10,6 +10,20 @@
 
 DEFINE_LOG_CATEGORY(LogSimpleHttpServer);
 
+namespace
+{
+	FHttpPath MakeHttpPathForRoute(const FString& HttpPath)
+	{
+		if (HttpPath == TEXT("/"))
+		{
+			TArray<FString> RootPathSegments;
+			return FHttpPath(RootPathSegments);
+		}
+
+		return FHttpPath(HttpPath);
+	}
+}
+
 void USimpleHttpServer::BeginDestroy()
 {
 	Super::BeginDestroy();
@@ -72,18 +86,12 @@ void USimpleHttpServer::BindRoute(FString HttpPath, ENativeHttpServerRequestVerb
 
 	if (HttpRouter.IsValid())
 	{
-		FHttpRouteHandle HttpRouteHandle = HttpRouter->BindRoute(FHttpPath(HttpPath), (EHttpServerRequestVerbs)Verbs,
-#if UE_VERSION_OLDER_THAN(5, 4, 0)
-			[&, HttpPath](const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
-			{
-				return HandleRequest(HttpPath, Request, OnComplete);
-			});
-#else
+		FHttpRouteHandle HttpRouteHandle = HttpRouter->BindRoute(MakeHttpPathForRoute(HttpPath), (EHttpServerRequestVerbs)Verbs,
+
 			FHttpRequestHandler::CreateLambda([&, HttpPath](const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
 			{
 				return HandleRequest(HttpPath, Request, OnComplete);
 			}));
-#endif
 
 		CreatedRouteHandlers.Add(HttpRouteHandle);
 	}
@@ -99,18 +107,12 @@ void USimpleHttpServer::BindRouteNative(FString HttpPath, ENativeHttpServerReque
 
 	if (HttpRouter.IsValid())
 	{
-		FHttpRouteHandle HttpRouteHandle = HttpRouter->BindRoute(FHttpPath(HttpPath), (EHttpServerRequestVerbs)Verbs,
-#if UE_VERSION_OLDER_THAN(5, 4, 0)
-			[&, HttpPath](const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
-			{
-				return HandleRequestNative(HttpPath, Request, OnComplete);
-			});
-#else
+		FHttpRouteHandle HttpRouteHandle = HttpRouter->BindRoute(MakeHttpPathForRoute(HttpPath), (EHttpServerRequestVerbs)Verbs,
+
 			FHttpRequestHandler::CreateLambda([&, HttpPath](const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
 			{
 				return HandleRequestNative(HttpPath, Request, OnComplete);
 			}));
-#endif
 
 		CreatedRouteHandlers.Add(HttpRouteHandle);
 	}
