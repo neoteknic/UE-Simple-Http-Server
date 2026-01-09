@@ -128,10 +128,16 @@ protected:
 	// Usualy used for c++
 	TMap<FString, FHttpRouteHandler> RouteHandlers;
 
+	// Keep track of verbs for paths that are handled without route binding (e.g. "/").
+	TMap<FString, ENativeHttpServerRequestVerbs> RouteVerbs;
+
 	// Cached Route Handlers. We should unbing them from route on self destroy
 	TArray<FHttpRouteHandle> CreatedRouteHandlers;
 
 	TSharedPtr<class IHttpRouter> HttpRouter;
+
+	FDelegateHandle RootRequestPreprocessorHandle;
+	bool bRootPreprocessorRegistered = false;
 
 	bool bServerStarted = false;
 };

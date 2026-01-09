@@ -16,6 +16,34 @@ namespace
 	{
 		return FHttpPath(HttpPath);
 	}
+
+	FString NormalizeHttpPath(FString InPath)
+	{
+		InPath.TrimStartAndEndInline();
+		if (InPath.IsEmpty())
+		{
+			return TEXT("/");
+		}
+
+		if (!InPath.StartsWith(TEXT("/")))
+		{
+			InPath = TEXT("/") + InPath;
+		}
+
+		while (InPath.Len() > 1 && InPath.EndsWith(TEXT("/")))
+		{
+			InPath.LeftChopInline(1, false);
+		}
+
+		return InPath;
+	}
+
+	bool VerbsMatch(ENativeHttpServerRequestVerbs AllowedVerbs, EHttpServerRequestVerbs RequestVerb)
+	{
+		const uint8 AllowedMask = static_cast<uint8>(AllowedVerbs);
+		const uint8 RequestMask = static_cast<uint8>((ENativeHttpServerRequestVerbs)RequestVerb);
+		return (AllowedMask & RequestMask) != 0;
+	}
 }
 
 void USimpleHttpServer::BeginDestroy()
@@ -64,6 +92,12 @@ void USimpleHttpServer::StopServer()
 
 	if (HttpRouter.IsValid())
 	{
+		if (bRootPreprocessorRegistered)
+		{
+			HttpRouter->UnregisterRequestPreprocessor(RootRequestPreprocessorHandle);
+			bRootPreprocessorRegistered = false;
+		}
+
 		// Editor will crash after receive request if you start game from editor, close it and start again.
 		// It is because HttpRouter lived in FHttpServerModule and don't be destroyed on game ending.
 		// When server stopped or being destroyed we must unbind all handlers to prevent errors on the next game start.
@@ -76,15 +110,70 @@ void USimpleHttpServer::StopServer()
 
 void USimpleHttpServer::BindRoute(FString HttpPath, ENativeHttpServerRequestVerbs Verbs, FHttpServerRequestDelegate OnHttpServerRequest)
 {
-	RouteDelegates.Add(HttpPath, OnHttpServerRequest);
+	const FString NormalizedPath = NormalizeHttpPath(HttpPath);
+	RouteDelegates.Add(NormalizedPath, OnHttpServerRequest);
+	if (ENativeHttpServerRequestVerbs* ExistingVerbs = RouteVerbs.Find(NormalizedPath))
+	{
+		*ExistingVerbs = (ENativeHttpServerRequestVerbs)((uint8)(*ExistingVerbs) | (uint8)Verbs);
+	}
+	else
+	{
+		RouteVerbs.Add(NormalizedPath, Verbs);
+	}
 
 	if (HttpRouter.IsValid())
 	{
-		FHttpRouteHandle HttpRouteHandle = HttpRouter->BindRoute(MakeHttpPathForRoute(HttpPath), (EHttpServerRequestVerbs)Verbs,
-
-		FHttpRequestHandler::CreateLambda([&, HttpPath](const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
+		if (NormalizedPath == TEXT("/"))
 		{
-			return HandleRequest(HttpPath, Request, OnComplete);
+			if (!bRootPreprocessorRegistered)
+			{
+				RootRequestPreprocessorHandle = HttpRouter->RegisterRequestPreprocessor(
+					FHttpRequestHandler::CreateLambda([this](const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
+					{
+						if (!Request.RelativePath.IsRoot())
+						{
+							return false;
+						}
+
+						if (const ENativeHttpServerRequestVerbs* AllowedVerbs = RouteVerbs.Find(TEXT("/")))
+						{
+							if (!VerbsMatch(*AllowedVerbs, Request.Verb))
+							{
+								return false;
+							}
+						}
+
+						if (RouteDelegates.Contains(TEXT("/")))
+						{
+							return HandleRequest(TEXT("/"), Request, OnComplete);
+						}
+
+						if (RouteHandlers.Contains(TEXT("/")))
+						{
+							return HandleRequestNative(TEXT("/"), Request, OnComplete);
+						}
+
+						return false;
+					}));
+
+				bRootPreprocessorRegistered = true;
+			}
+
+			return;
+		}
+
+		const FHttpPath RoutePath = MakeHttpPathForRoute(NormalizedPath);
+		if (!RoutePath.IsValidPath())
+		{
+			UE_LOG(LogSimpleHttpServer, Error, TEXT("Invalid route path: '%s'. This route will not be bound."), *NormalizedPath);
+			return;
+		}
+
+		FHttpRouteHandle HttpRouteHandle = HttpRouter->BindRoute(RoutePath, (EHttpServerRequestVerbs)Verbs,
+
+		FHttpRequestHandler::CreateLambda([&, NormalizedPath](const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
+		{
+			return HandleRequest(NormalizedPath, Request, OnComplete);
 		}));
 
 
@@ -98,15 +187,70 @@ void USimpleHttpServer::BindRoute(FString HttpPath, ENativeHttpServerRequestVerb
 
 void USimpleHttpServer::BindRouteNative(FString HttpPath, ENativeHttpServerRequestVerbs Verbs, FHttpRouteHandler Handler)
 {
-	RouteHandlers.Add(HttpPath, Handler);
+	const FString NormalizedPath = NormalizeHttpPath(HttpPath);
+	RouteHandlers.Add(NormalizedPath, Handler);
+	if (ENativeHttpServerRequestVerbs* ExistingVerbs = RouteVerbs.Find(NormalizedPath))
+	{
+		*ExistingVerbs = (ENativeHttpServerRequestVerbs)((uint8)(*ExistingVerbs) | (uint8)Verbs);
+	}
+	else
+	{
+		RouteVerbs.Add(NormalizedPath, Verbs);
+	}
 
 	if (HttpRouter.IsValid())
 	{
-		FHttpRouteHandle HttpRouteHandle = HttpRouter->BindRoute(MakeHttpPathForRoute(HttpPath), (EHttpServerRequestVerbs)Verbs,
-
-		FHttpRequestHandler::CreateLambda([&, HttpPath](const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
+		if (NormalizedPath == TEXT("/"))
 		{
-			return HandleRequestNative(HttpPath, Request, OnComplete);
+			if (!bRootPreprocessorRegistered)
+			{
+				RootRequestPreprocessorHandle = HttpRouter->RegisterRequestPreprocessor(
+					FHttpRequestHandler::CreateLambda([this](const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
+					{
+						if (!Request.RelativePath.IsRoot())
+						{
+							return false;
+						}
+
+						if (const ENativeHttpServerRequestVerbs* AllowedVerbs = RouteVerbs.Find(TEXT("/")))
+						{
+							if (!VerbsMatch(*AllowedVerbs, Request.Verb))
+							{
+								return false;
+							}
+						}
+
+						if (RouteDelegates.Contains(TEXT("/")))
+						{
+							return HandleRequest(TEXT("/"), Request, OnComplete);
+						}
+
+						if (RouteHandlers.Contains(TEXT("/")))
+						{
+							return HandleRequestNative(TEXT("/"), Request, OnComplete);
+						}
+
+						return false;
+					}));
+
+				bRootPreprocessorRegistered = true;
+			}
+
+			return;
+		}
+
+		const FHttpPath RoutePath = MakeHttpPathForRoute(NormalizedPath);
+		if (!RoutePath.IsValidPath())
+		{
+			UE_LOG(LogSimpleHttpServer, Error, TEXT("Invalid route path: '%s'. This route will not be bound."), *NormalizedPath);
+			return;
+		}
+
+		FHttpRouteHandle HttpRouteHandle = HttpRouter->BindRoute(RoutePath, (EHttpServerRequestVerbs)Verbs,
+
+		FHttpRequestHandler::CreateLambda([&, NormalizedPath](const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
+		{
+			return HandleRequestNative(NormalizedPath, Request, OnComplete);
 		}));
 
 
